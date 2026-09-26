@@ -16,14 +16,25 @@ interface RequestItem {
   created_at: string;
 }
 
+interface CommentItem {
+  id: string;
+  request_id: string;
+  content: string;
+  created_at: string;
+}
+
 export default function Home() {
   const [requests, setRequests] = useState<RequestItem[]>([]);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [loading, setLoading] = useState(false);
-  
-  // إمكانية تغيير لون الخلفية بحرية (الافتراضي هو اللون الوردي)
   const [bgColor, setBgColor] = useState('#fff1f2');
+
+  // حالة التعليقات
+  const [activeRequestId, setActiveRequestId] = useState<string | null>(null);
+  const [comments, setComments] = useState<CommentItem[]>([]);
+  const [newComment, setNewComment] = useState('');
+  const [commentLoading, setCommentLoading] = useState(false);
 
   const fetchRequests = async () => {
     const { data, error } = await supabase
@@ -36,24 +47,35 @@ export default function Home() {
     }
   };
 
+  const fetchComments = async (requestId: string) => {
+    const { data, error } = await supabase
+      .from('comments')
+      .select('*')
+      .eq('request_id', requestId)
+      .order('created_at', { ascending: true });
+
+    if (!error && data) {
+      setComments(data as CommentItem[]);
+    }
+  };
+
   useEffect(() => {
     fetchRequests();
 
     const channel = supabase
       .channel('schema-db-changes')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'requests' },
-        () => {
-          fetchRequests();
-        }
-      )
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'requests' }, () => {
+        fetchRequests();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'comments' }, () => {
+        if (activeRequestId) fetchComments(activeRequestId);
+      })
       .subscribe();
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [activeRequestId]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -81,6 +103,32 @@ export default function Home() {
     if (!error) {
       fetchRequests();
     }
+  };
+
+  const toggleComments = (requestId: string) => {
+    if (activeRequestId === requestId) {
+      setActiveRequestId(null);
+      setComments([]);
+    } else {
+      setActiveRequestId(requestId);
+      fetchComments(requestId);
+    }
+  };
+
+  const handleAddComment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newComment.trim() || !activeRequestId) return;
+
+    setCommentLoading(true);
+    const { error } = await supabase.from('comments').insert([
+      { request_id: activeRequestId, content: newComment }
+    ]);
+
+    if (!error) {
+      setNewComment('');
+      fetchComments(activeRequestId);
+    }
+    setCommentLoading(false);
   };
 
   const getStatusStyle = (status: string) => {
@@ -249,7 +297,7 @@ export default function Home() {
               No feature requests yet. Be the first to suggest one!
             </div>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               {requests.map((item) => (
                 <div
                   key={item.id}
@@ -257,58 +305,149 @@ export default function Home() {
                     backgroundColor: '#ffffff',
                     borderRadius: '16px',
                     padding: '20px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '16px',
                     border: '1px solid #ffe4e6',
                     boxShadow: '0 4px 12px rgba(0, 0, 0, 0.02)'
                   }}
                 >
-                  {/* Upvote Button */}
-                  <button
-                    onClick={() => handleUpvote(item.id, item.votes)}
-                    style={{
-                      display: 'flex',
-                      flexDirection: 'column',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      backgroundColor: '#fff1f2',
-                      border: '1px solid #fecdd3',
-                      borderRadius: '12px',
-                      padding: '10px 14px',
-                      cursor: 'pointer',
-                      minWidth: '56px',
-                      color: '#be123c'
-                    }}
-                  >
-                    <span style={{ fontSize: '12px' }}>▲</span>
-                    <span style={{ fontSize: '16px', fontWeight: '800' }}>{item.votes}</span>
-                  </button>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px' }}>
+                    {/* Upvote Button */}
+                    <button
+                      onClick={() => handleUpvote(item.id, item.votes)}
+                      style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        backgroundColor: '#fff1f2',
+                        border: '1px solid #fecdd3',
+                        borderRadius: '12px',
+                        padding: '10px 14px',
+                        cursor: 'pointer',
+                        minWidth: '56px',
+                        color: '#be123c'
+                      }}
+                    >
+                      <span style={{ fontSize: '12px' }}>▲</span>
+                      <span style={{ fontSize: '16px', fontWeight: '800' }}>{item.votes}</span>
+                    </button>
 
-                  {/* Content */}
-                  <div style={{ flex: 1 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', marginBottom: '4px' }}>
-                      <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '700', color: '#4c0519' }}>
-                        {item.title}
-                      </h3>
-                      <span style={{
-                        fontSize: '12px',
-                        fontWeight: '700',
-                        padding: '4px 10px',
-                        borderRadius: '20px',
-                        border: '1px solid',
-                        textTransform: 'capitalize',
-                        ...getStatusStyle(item.status)
-                      }}>
-                        {item.status}
-                      </span>
+                    {/* Content */}
+                    <div style={{ flex: 1 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', marginBottom: '4px' }}>
+                        <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '700', color: '#4c0519' }}>
+                          {item.title}
+                        </h3>
+                        <span style={{
+                          fontSize: '12px',
+                          fontWeight: '700',
+                          padding: '4px 10px',
+                          borderRadius: '20px',
+                          border: '1px solid',
+                          textTransform: 'capitalize',
+                          ...getStatusStyle(item.status)
+                        }}>
+                          {item.status}
+                        </span>
+                      </div>
+                      {item.description && (
+                        <p style={{ margin: '0 0 12px 0', fontSize: '14px', color: '#881337', lineHeight: '1.5' }}>
+                          {item.description}
+                        </p>
+                      )}
+
+                      {/* Comments Toggle Button */}
+                      <button
+                        onClick={() => toggleComments(item.id)}
+                        style={{
+                          backgroundColor: 'transparent',
+                          border: 'none',
+                          color: '#e11d48',
+                          fontSize: '13px',
+                          fontWeight: '700',
+                          cursor: 'pointer',
+                          padding: 0,
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px'
+                        }}
+                      >
+                        💬 {activeRequestId === item.id ? 'Hide Comments' : 'Discussion & Comments'}
+                      </button>
                     </div>
-                    {item.description && (
-                      <p style={{ margin: 0, fontSize: '14px', color: '#881337', lineHeight: '1.5' }}>
-                        {item.description}
-                      </p>
-                    )}
                   </div>
+
+                  {/* Comments Section Drawer */}
+                  {activeRequestId === item.id && (
+                    <div style={{
+                      marginTop: '16px',
+                      paddingTop: '16px',
+                      borderTop: '1px dashed #fecdd3',
+                      backgroundColor: '#fff1f2',
+                      padding: '16px',
+                      borderRadius: '12px'
+                    }}>
+                      <h4 style={{ margin: '0 0 12px 0', fontSize: '14px', fontWeight: '700', color: '#831843' }}>
+                        Comments
+                      </h4>
+
+                      {comments.length === 0 ? (
+                        <p style={{ fontSize: '13px', color: '#9f1239', margin: '0 0 12px 0' }}>
+                          No comments yet. Start the conversation!
+                        </p>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '12px' }}>
+                          {comments.map((c) => (
+                            <div key={c.id} style={{
+                              backgroundColor: '#ffffff',
+                              padding: '10px 14px',
+                              borderRadius: '8px',
+                              fontSize: '13px',
+                              color: '#4c0519',
+                              border: '1px solid #ffe4e6'
+                            }}>
+                              {c.content}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Add Comment Form */}
+                      <form onSubmit={handleAddComment} style={{ display: 'flex', gap: '8px' }}>
+                        <input
+                          type="text"
+                          required
+                          value={newComment}
+                          onChange={(e) => setNewComment(e.target.value)}
+                          placeholder="Write a comment..."
+                          style={{
+                            flex: 1,
+                            padding: '8px 12px',
+                            borderRadius: '8px',
+                            border: '1px solid #fecdd3',
+                            outline: 'none',
+                            fontSize: '13px'
+                          }}
+                        />
+                        <button
+                          type="submit"
+                          disabled={commentLoading}
+                          style={{
+                            backgroundColor: '#e11d48',
+                            color: '#fff',
+                            border: 'none',
+                            padding: '8px 14px',
+                            borderRadius: '8px',
+                            fontWeight: '700',
+                            fontSize: '13px',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          Send
+                        </button>
+                      </form>
+                    </div>
+                  )}
+
                 </div>
               ))}
             </div>
